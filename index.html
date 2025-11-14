@@ -1034,7 +1034,9 @@
                             user_id: currentUser.id, 
                             title: title,
                             sequence_data: recordedSequence,
-                            settings: settings
+                            settings: settings,
+                            likes: 0,
+                            liked_by: []
                         }
                     ])
                     .select();
@@ -1171,6 +1173,12 @@
         // Функция для лайка/анлайка
         async function toggleLike(sequenceId, likeBtn) {
             try {
+                if (!currentUser) {
+                    alert('Для оценки секвенции необходимо войти в систему');
+                    return;
+                }
+
+                // Загружаем текущее состояние секвенции
                 const { data: sequence, error } = await supabase
                     .from('sequences')
                     .select('likes, liked_by')
