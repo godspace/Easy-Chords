@@ -469,6 +469,12 @@
             opacity: 0.7;
         }
         
+        .gallery-date {
+            font-size: 0.7rem;
+            opacity: 0.5;
+            margin-top: 3px;
+        }
+        
         .gallery-actions {
             display: flex;
             gap: 10px;
@@ -497,12 +503,19 @@
             border-radius: 5px;
             color: white;
             cursor: pointer;
+            font-size: 0.8rem;
         }
         
         .loading {
             text-align: center;
             padding: 20px;
             opacity: 0.7;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            text-align: center;
+            padding: 20px;
         }
         
         @media (max-width: 400px) {
@@ -533,6 +546,11 @@
                 font-size: 0.8rem;
                 padding: 10px 5px;
             }
+            
+            .play-sequence-btn {
+                padding: 6px 10px;
+                font-size: 0.7rem;
+            }
         }
     </style>
 </head>
@@ -556,7 +574,6 @@
             <div class="timer" id="timer">00:00 / 01:00</div>
             <div class="sequencer-display" id="sequencer-display">
                 <div class="time-marker" id="time-marker"></div>
-                <!-- Записанные аккорды будут появляться здесь -->
             </div>
         </div>
         
@@ -734,7 +751,7 @@
         const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2YXBiY2JnZXJwZG9qcW51cWxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNzc4OTAsImV4cCI6MjA3ODY1Mzg5MH0.cRdBJCw-lWSvgI2ZpUqUONc_AMP79ZKvKCOFsC5ti6c';
         const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
         
-        // Аудиоконтекст и эффекты
+        // Создаем аудиоконтекст для генерации звуков
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioContext = new AudioContext();
         
@@ -747,23 +764,26 @@
         const dryGain = audioContext.createGain();
         const limiter = audioContext.createDynamicsCompressor();
         
-        // Настройка эффектов
+        // Настройка компрессора
         compressor.threshold.setValueAtTime(-24, audioContext.currentTime);
         compressor.knee.setValueAtTime(30, audioContext.currentTime);
         compressor.ratio.setValueAtTime(12, audioContext.currentTime);
         compressor.attack.setValueAtTime(0.003, audioContext.currentTime);
         compressor.release.setValueAtTime(0.25, audioContext.currentTime);
         
+        // Настройка лимитера
         limiter.threshold.setValueAtTime(-3.0, audioContext.currentTime);
         limiter.knee.setValueAtTime(0, audioContext.currentTime);
         limiter.ratio.setValueAtTime(20, audioContext.currentTime);
         limiter.attack.setValueAtTime(0.001, audioContext.currentTime);
         limiter.release.setValueAtTime(0.05, audioContext.currentTime);
         
+        // Настройка фильтра
         filter.type = 'lowpass';
         filter.frequency.value = 3000;
         filter.Q.value = 1;
         
+        // Настройка громкости
         masterGain.gain.value = 0.5;
         dryGain.gain.value = 1.0;
         reverbGain.gain.value = 0.5;
@@ -800,11 +820,11 @@
         let recordingDuration = 0;
         const MAX_RECORDING_TIME = 60000;
         
-        // Активные осцилляторы для управления полифонией
+        // Активные осцилляторы
         let activeOscillators = [];
         const MAX_POLYPHONY = 20;
         
-        // Элементы управления секвенсором
+        // Элементы управления
         const recordBtn = document.getElementById('record-btn');
         const playStopBtn = document.getElementById('play-stop-btn');
         const clearBtn = document.getElementById('clear-btn');
@@ -812,7 +832,7 @@
         const timeMarker = document.getElementById('time-marker');
         const timerElement = document.getElementById('timer');
         
-        // Новые кнопки действий
+        // Кнопки действий
         const downloadBtn = document.getElementById('download-btn');
         const shareBtn = document.getElementById('share-btn');
         const galleryBtn = document.getElementById('gallery-btn');
@@ -847,319 +867,354 @@
         
         // Функция для проверки состояния авторизации
         async function checkAuthState() {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                currentUser = user;
-                // Загружаем профиль пользователя
-                await loadUserProfile(user.id);
-                authBtn.textContent = 'Выйти';
-                shareBtn.classList.remove('disabled');
-            } else {
-                currentUser = null;
-                userProfile = null;
-                userEmail.textContent = 'Гость';
-                authBtn.textContent = 'Войти';
-                shareBtn.classList.add('disabled');
+            try {
+                const { data: { user }, error } = await supabase.auth.getUser();
+                if (error) throw error;
+                
+                if (user) {
+                    currentUser = user;
+                    await loadUserProfile(user.id);
+                    authBtn.textContent = 'Выйти';
+                    shareBtn.classList.remove('disabled');
+                } else {
+                    currentUser = null;
+                    userProfile = null;
+                    userEmail.textContent = 'Гость';
+                    authBtn.textContent = 'Войти';
+                    shareBtn.classList.add('disabled');
+                }
+            } catch (error) {
+                console.error('Ошибка проверки авторизации:', error);
             }
         }
         
         // Функция для загрузки профиля пользователя
         async function loadUserProfile(userId) {
-            const { data, error } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', userId)
-                .single();
+            try {
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('id', userId)
+                    .single();
+                    
+                if (error) throw error;
                 
-            if (error) {
+                userProfile = data;
+                userEmail.textContent = data.nickname || 'Пользователь';
+            } catch (error) {
                 console.error('Ошибка загрузки профиля:', error);
                 userEmail.textContent = 'Пользователь';
-                return;
             }
-            
-            userProfile = data;
-            userEmail.textContent = data.nickname || 'Пользователь';
         }
         
         // Функция для входа
         async function signIn(nickname, password) {
-            // Ищем пользователя по никнейму
-            const { data: profiles, error: profileError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('nickname', nickname)
-                .single();
+            try {
+                // Создаем email на основе никнейма
+                const email = `${nickname}@sequencer.local`;
                 
-            if (profileError || !profiles) {
-                alert('Пользователь с таким никнеймом не найден');
-                return false;
-            }
-            
-            // Получаем email пользователя для входа
-            const { data: userData, error: userError } = await supabase
-                .from('profiles')
-                .select('id, email')
-                .eq('nickname', nickname)
-                .single();
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email: email,
+                    password: password
+                });
                 
-            if (userError || !userData) {
-                alert('Ошибка при поиске пользователя');
-                return false;
-            }
-            
-            // Входим с email и паролем
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email: userData.email,
-                password: password
-            });
-            
-            if (error) {
+                if (error) throw error;
+                
+                currentUser = data.user;
+                await loadUserProfile(data.user.id);
+                authBtn.textContent = 'Выйти';
+                shareBtn.classList.remove('disabled');
+                authModal.style.display = 'none';
+                
+                // Очищаем поля формы
+                authNickname.value = '';
+                authPassword.value = '';
+                
+                return true;
+            } catch (error) {
+                console.error('Ошибка входа:', error);
                 alert('Ошибка входа: ' + error.message);
                 return false;
             }
-            
-            currentUser = data.user;
-            await loadUserProfile(data.user.id);
-            authBtn.textContent = 'Выйти';
-            shareBtn.classList.remove('disabled');
-            authModal.style.display = 'none';
-            return true;
         }
         
         // Функция для регистрации
         async function signUp(nickname, password) {
-            // Проверяем, свободен ли никнейм
-            const { data: existingProfile, error: checkError } = await supabase
-                .from('profiles')
-                .select('id')
-                .eq('nickname', nickname)
-                .single();
-                
-            if (existingProfile) {
-                alert('Этот никнейм уже занят');
-                return false;
-            }
-            
-            // Создаем email на основе никнейма
-            const email = `${nickname}@sequencer.local`;
-            
-            // Регистрируем пользователя
-            const { data, error } = await supabase.auth.signUp({
-                email: email,
-                password: password,
-                options: {
-                    data: {
-                        nickname: nickname
-                    }
+            try {
+                // Проверяем, свободен ли никнейм
+                const { data: existingProfile, error: checkError } = await supabase
+                    .from('profiles')
+                    .select('id')
+                    .eq('nickname', nickname)
+                    .single();
+                    
+                if (existingProfile) {
+                    alert('Этот никнейм уже занят');
+                    return false;
                 }
-            });
-            
-            if (error) {
+                
+                // Создаем email на основе никнейма
+                const email = `${nickname}@sequencer.local`;
+                
+                // Регистрируем пользователя
+                const { data, error } = await supabase.auth.signUp({
+                    email: email,
+                    password: password,
+                    options: {
+                        data: {
+                            nickname: nickname
+                        }
+                    }
+                });
+                
+                if (error) throw error;
+                
+                alert('Регистрация успешна! Теперь вы можете войти.');
+                
+                // Очищаем поля формы
+                authNickname.value = '';
+                authPassword.value = '';
+                
+                return true;
+            } catch (error) {
+                console.error('Ошибка регистрации:', error);
                 alert('Ошибка регистрации: ' + error.message);
                 return false;
             }
-            
-            alert('Регистрация успешна! Теперь вы можете войти.');
-            return true;
         }
         
         // Функция для выхода
         async function signOut() {
-            const { error } = await supabase.auth.signOut();
-            if (error) {
+            try {
+                const { error } = await supabase.auth.signOut();
+                if (error) throw error;
+                
+                currentUser = null;
+                userProfile = null;
+                userEmail.textContent = 'Гость';
+                authBtn.textContent = 'Войти';
+                shareBtn.classList.add('disabled');
+            } catch (error) {
+                console.error('Ошибка выхода:', error);
                 alert('Ошибка выхода: ' + error.message);
-                return;
             }
-            
-            currentUser = null;
-            userProfile = null;
-            userEmail.textContent = 'Гость';
-            authBtn.textContent = 'Войти';
-            shareBtn.classList.add('disabled');
         }
         
         // Функция для сохранения секвенции
         async function saveSequence(title) {
-            if (!currentUser) {
-                alert('Для сохранения секвенции необходимо войти в систему');
-                return false;
-            }
-            
-            if (recordedSequence.length === 0) {
-                alert('Сначала запишите последовательность аккордов');
-                return false;
-            }
-            
-            // Проверяем, не превышен ли лимит в 3 секвенции
-            const { data: userSequences, error: countError } = await supabase
-                .from('sequences')
-                .select('id')
-                .eq('user_id', currentUser.id);
+            try {
+                if (!currentUser) {
+                    alert('Для сохранения секвенции необходимо войти в систему');
+                    return false;
+                }
                 
-            if (countError) {
-                alert('Ошибка при проверке лимита: ' + countError.message);
-                return false;
-            }
-            
-            if (userSequences && userSequences.length >= 3) {
-                alert('Вы можете сохранить только 3 секвенции. Удалите одну из старых, чтобы сохранить новую.');
-                return false;
-            }
-            
-            // Сохраняем секвенцию
-            const { data, error } = await supabase
-                .from('sequences')
-                .insert([
-                    { 
-                        user_id: currentUser.id, 
-                        title: title,
-                        sequence_data: recordedSequence,
-                        settings: settings
-                    }
-                ])
-                .select();
+                if (recordedSequence.length === 0) {
+                    alert('Сначала запишите последовательность аккордов');
+                    return false;
+                }
                 
-            if (error) {
+                // Проверяем, не превышен ли лимит в 3 секвенции
+                const { data: userSequences, error: countError } = await supabase
+                    .from('sequences')
+                    .select('id')
+                    .eq('user_id', currentUser.id);
+                    
+                if (countError) throw countError;
+                
+                if (userSequences && userSequences.length >= 3) {
+                    alert('Вы можете сохранить только 3 секвенции. Удалите одну из старых, чтобы сохранить новую.');
+                    return false;
+                }
+                
+                // Сохраняем секвенцию
+                const { data, error } = await supabase
+                    .from('sequences')
+                    .insert([
+                        { 
+                            user_id: currentUser.id, 
+                            title: title,
+                            sequence_data: recordedSequence,
+                            settings: settings
+                        }
+                    ])
+                    .select();
+                    
+                if (error) throw error;
+                
+                alert('Секвенция успешно сохранена!');
+                shareModal.style.display = 'none';
+                sequenceTitle.value = '';
+                return true;
+            } catch (error) {
+                console.error('Ошибка сохранения:', error);
                 alert('Ошибка сохранения: ' + error.message);
                 return false;
             }
-            
-            alert('Секвенция успешно сохранена!');
-            shareModal.style.display = 'none';
-            return true;
         }
         
         // Функция для загрузки галереи
         async function loadGallery() {
-            galleryContent.innerHTML = '<div class="loading">Загрузка...</div>';
-            
-            const { data: sequences, error } = await supabase
-                .from('sequences')
-                .select(`
-                    id,
-                    title,
-                    sequence_data,
-                    settings,
-                    likes,
-                    liked_by,
-                    user_id,
-                    profiles:user_id (nickname)
-                `)
-                .order('created_at', { ascending: false });
+            try {
+                galleryContent.innerHTML = '<div class="loading">Загрузка галереи...</div>';
                 
-            if (error) {
-                console.error('Ошибка загрузки галереи:', error);
-                galleryContent.innerHTML = '<p>Ошибка загрузки галереи</p>';
-                return;
-            }
-            
-            if (!sequences || sequences.length === 0) {
-                galleryContent.innerHTML = '<p>Пока нет сохраненных секвенций</p>';
-                return;
-            }
-            
-            galleryContent.innerHTML = '';
-            
-            sequences.forEach(seq => {
-                const galleryItem = document.createElement('div');
-                galleryItem.className = 'gallery-item';
+                console.log('Начало загрузки галереи...');
                 
-                const isLikedByUser = currentUser && seq.liked_by && seq.liked_by.includes(currentUser.id);
+                // Загружаем секвенции
+                const { data: sequences, error: sequencesError } = await supabase
+                    .from('sequences')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                    
+                if (sequencesError) {
+                    console.error('Ошибка загрузки sequences:', sequencesError);
+                    throw sequencesError;
+                }
                 
-                galleryItem.innerHTML = `
-                    <div class="gallery-info">
-                        <div class="gallery-title">${seq.title}</div>
-                        <div class="gallery-author">Автор: ${seq.profiles.nickname}</div>
-                    </div>
-                    <div class="gallery-actions">
-                        <button class="like-btn ${isLikedByUser ? 'liked' : ''}" data-id="${seq.id}">
-                            ♥ <span>${seq.likes || 0}</span>
-                        </button>
-                        <button class="play-sequence-btn" data-id="${seq.id}">▶</button>
+                console.log('Загружено секвенций:', sequences?.length);
+                
+                if (!sequences || sequences.length === 0) {
+                    galleryContent.innerHTML = '<p>Пока нет сохраненных секвенций. Будьте первым!</p>';
+                    return;
+                }
+                
+                // Загружаем профили пользователей
+                const userIds = [...new Set(sequences.map(seq => seq.user_id))];
+                console.log('User IDs для загрузки:', userIds);
+                
+                const { data: profiles, error: profilesError } = await supabase
+                    .from('profiles')
+                    .select('id, nickname')
+                    .in('id', userIds);
+                    
+                if (profilesError) {
+                    console.warn('Ошибка загрузки профилей:', profilesError);
+                }
+                
+                console.log('Загружено профилей:', profiles?.length);
+                
+                // Создаем карту профилей
+                const profilesMap = {};
+                if (profiles) {
+                    profiles.forEach(profile => {
+                        profilesMap[profile.id] = profile;
+                    });
+                }
+                
+                // Очищаем контент и создаем элементы галереи
+                galleryContent.innerHTML = '';
+                
+                sequences.forEach(seq => {
+                    const galleryItem = document.createElement('div');
+                    galleryItem.className = 'gallery-item';
+                    
+                    const profile = profilesMap[seq.user_id];
+                    const authorName = profile ? profile.nickname : 'Анонимный пользователь';
+                    const isLikedByUser = currentUser && seq.liked_by && seq.liked_by.includes(currentUser.id);
+                    
+                    galleryItem.innerHTML = `
+                        <div class="gallery-info">
+                            <div class="gallery-title">${seq.title || 'Без названия'}</div>
+                            <div class="gallery-author">Автор: ${authorName}</div>
+                            <div class="gallery-date">Создано: ${new Date(seq.created_at).toLocaleDateString('ru-RU')}</div>
+                        </div>
+                        <div class="gallery-actions">
+                            <button class="like-btn ${isLikedByUser ? 'liked' : ''}" data-id="${seq.id}">
+                                ♥ <span>${seq.likes || 0}</span>
+                            </button>
+                            <button class="play-sequence-btn" data-id="${seq.id}">▶ Воспроизвести</button>
+                        </div>
+                    `;
+                    
+                    galleryContent.appendChild(galleryItem);
+                });
+                
+                // Добавляем обработчики событий
+                document.querySelectorAll('.like-btn').forEach(btn => {
+                    btn.addEventListener('click', async function() {
+                        if (!currentUser) {
+                            alert('Для оценки секвенции необходимо войти в систему');
+                            return;
+                        }
+                        
+                        const sequenceId = this.getAttribute('data-id');
+                        await toggleLike(sequenceId, this);
+                    });
+                });
+                
+                document.querySelectorAll('.play-sequence-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const sequenceId = this.getAttribute('data-id');
+                        const sequence = sequences.find(s => s.id == sequenceId);
+                        if (sequence) {
+                            playSequenceFromData(sequence.sequence_data, sequence.settings);
+                            galleryModal.style.display = 'none';
+                        }
+                    });
+                });
+                
+                console.log('Галерея успешно загружена');
+                
+            } catch (error) {
+                console.error('Полная ошибка загрузки галереи:', error);
+                galleryContent.innerHTML = `
+                    <div class="error">
+                        <p>Ошибка загрузки галереи</p>
+                        <p style="font-size: 0.8rem; opacity: 0.7;">${error.message}</p>
+                        <p style="font-size: 0.7rem; opacity: 0.5;">
+                            Проверьте настройки базы данных
+                        </p>
                     </div>
                 `;
-                
-                galleryContent.appendChild(galleryItem);
-            });
-            
-            // Добавляем обработчики для кнопок лайков и воспроизведения
-            document.querySelectorAll('.like-btn').forEach(btn => {
-                btn.addEventListener('click', async function() {
-                    if (!currentUser) {
-                        alert('Для оценки секвенции необходимо войти в систему');
-                        return;
-                    }
-                    
-                    const sequenceId = this.getAttribute('data-id');
-                    await toggleLike(sequenceId, this);
-                });
-            });
-            
-            document.querySelectorAll('.play-sequence-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const sequenceId = this.getAttribute('data-id');
-                    const sequence = sequences.find(s => s.id == sequenceId);
-                    if (sequence) {
-                        playSequenceFromData(sequence.sequence_data, sequence.settings);
-                    }
-                });
-            });
+            }
         }
         
         // Функция для лайка/анлайка
         async function toggleLike(sequenceId, likeBtn) {
-            const { data: sequence, error } = await supabase
-                .from('sequences')
-                .select('likes, liked_by')
-                .eq('id', sequenceId)
-                .single();
+            try {
+                const { data: sequence, error } = await supabase
+                    .from('sequences')
+                    .select('likes, liked_by')
+                    .eq('id', sequenceId)
+                    .single();
+                    
+                if (error) throw error;
                 
-            if (error) {
-                console.error('Ошибка при получении данных секвенции:', error);
-                return;
-            }
-            
-            const currentLikes = sequence.likes || 0;
-            const likedBy = sequence.liked_by || [];
-            const isLiked = likedBy.includes(currentUser.id);
-            
-            let newLikes;
-            let newLikedBy;
-            
-            if (isLiked) {
-                // Убираем лайк
-                newLikes = Math.max(0, currentLikes - 1);
-                newLikedBy = likedBy.filter(id => id !== currentUser.id);
-                likeBtn.classList.remove('liked');
-            } else {
-                // Добавляем лайк
-                newLikes = currentLikes + 1;
-                newLikedBy = [...likedBy, currentUser.id];
-                likeBtn.classList.add('liked');
-            }
-            
-            // Обновляем счетчик лайков
-            likeBtn.querySelector('span').textContent = newLikes;
-            
-            // Обновляем данные в базе
-            const { error: updateError } = await supabase
-                .from('sequences')
-                .update({ 
-                    likes: newLikes,
-                    liked_by: newLikedBy
-                })
-                .eq('id', sequenceId);
+                const currentLikes = sequence.likes || 0;
+                const likedBy = sequence.liked_by || [];
+                const isLiked = likedBy.includes(currentUser.id);
                 
-            if (updateError) {
-                console.error('Ошибка при обновлении лайков:', updateError);
-                // Откатываем визуальные изменения
+                let newLikes;
+                let newLikedBy;
+                
                 if (isLiked) {
-                    likeBtn.classList.add('liked');
-                    likeBtn.querySelector('span').textContent = currentLikes;
-                } else {
+                    // Убираем лайк
+                    newLikes = Math.max(0, currentLikes - 1);
+                    newLikedBy = likedBy.filter(id => id !== currentUser.id);
                     likeBtn.classList.remove('liked');
-                    likeBtn.querySelector('span').textContent = currentLikes;
+                } else {
+                    // Добавляем лайк
+                    newLikes = currentLikes + 1;
+                    newLikedBy = [...likedBy, currentUser.id];
+                    likeBtn.classList.add('liked');
                 }
+                
+                // Обновляем счетчик лайков
+                likeBtn.querySelector('span').textContent = newLikes;
+                
+                // Обновляем данные в базе
+                const { error: updateError } = await supabase
+                    .from('sequences')
+                    .update({ 
+                        likes: newLikes,
+                        liked_by: newLikedBy
+                    })
+                    .eq('id', sequenceId);
+                    
+                if (updateError) throw updateError;
+                
+            } catch (error) {
+                console.error('Ошибка при обновлении лайков:', error);
+                alert('Ошибка при оценке секвенции');
             }
         }
         
@@ -1222,15 +1277,7 @@
             });
         }
         
-        // Остальные функции для работы с аудио и секвенсором...
-        // (createReverbBuffer, centsToRatio, createOscillator, managePolyphony,
-        // createADSR, playChord, noteFrequencies, getMajorChord, getMinorChord, 
-        // getMajor7Chord, getMinor7Chord, formatTime, updateRecordingTimer, startRecording,
-        // stopRecording, recordChord, addChordBlockToSequencer, playSequence, 
-        // playChordForSequence, highlightActiveChordBlock, stopPlayback, clearSequencer,
-        // renderToWAV, createOfflineADSR, bufferToWav)
-        
-        // Создаем импульсный ответ для реверберации
+        // Функция для создания импульсного ответа для реверберации
         function createReverbBuffer(audioContext, duration = 2.0) {
             const length = audioContext.sampleRate * duration;
             const buffer = audioContext.createBuffer(2, length, audioContext.sampleRate);
@@ -1870,7 +1917,7 @@
             clearSequencer();
         });
         
-        // Обработчики для новых кнопок действий
+        // Обработчики для кнопок действий
         downloadBtn.addEventListener('click', function() {
             renderToWAV();
         });
