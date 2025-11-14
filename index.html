@@ -723,9 +723,9 @@
     </div>
 
     <script>
-        // Инициализация Supabase
-        const supabaseUrl = 'https://slgzxksmgmlyyfuodjpx.supabase.co';
-        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsZ3p4a3NtZ21seXlmdW9kanB4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwOTcwNzAsImV4cCI6MjA3ODY3MzA3MH0.idYF4bQB8WYh-LFQuQfMoOl84WwIiVnOHFCWE6YfSI0';
+        // Инициализация Supabase с новыми данными
+        const supabaseUrl = 'https://pvapbcbgerpdojqnuqlm.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB2YXBiY2JnZXJwZG9qcW51cWxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMwNzc4OTAsImV4cCI6MjA3ODY1Mzg5MH0.cRdBJCw-lWSvgI2ZpUqUONc_AMP79ZKvKCOFsC5ti6c';
         const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
         
         // Создаем аудиоконтекст для генерации звуков
@@ -1140,87 +1140,192 @@
             });
         }
         
-        // Функция для рендеринга WAV
+        // Функция для создания импульсного ответа для реверберации
+        function createReverbBuffer(audioContext, duration = 2.0) {
+            const length = audioContext.sampleRate * duration;
+            const buffer = audioContext.createBuffer(2, length, audioContext.sampleRate);
+            const dataL = buffer.getChannelData(0);
+            const dataR = buffer.getChannelData(1);
+            
+            for (let i = 0; i < length; i++) {
+                // Создаем более реалистичную реверберацию с ранними отражениями
+                const decay = Math.pow(1 - i / length, 2);
+                const earlyReflections = (i < length * 0.1) ? 1.5 : 1.0;
+                const noise = (Math.random() * 2 - 1) * decay * earlyReflections;
+                
+                dataL[i] = noise;
+                dataR[i] = noise * 0.7; // Небольшая разница между каналами для стерео-эффекта
+            }
+            
+            return buffer;
+        }
+        
+        // Функция для рендеринга WAV с высоким качеством
         async function renderToWAV() {
             if (recordedSequence.length === 0) {
                 alert('Сначала запишите последовательность аккордов');
                 return;
             }
             
-            // Создаем OfflineAudioContext для рендеринга
-            const offlineCtx = new OfflineAudioContext({
-                numberOfChannels: 2,
-                length: 44100 * (recordedSequence[recordedSequence.length - 1].timeOffset / 1000 + settings.duration + 1),
-                sampleRate: 44100,
-            });
-            
-            // Временно применяем настройки для рендеринга
-            const renderSettings = { ...settings };
-            
-            // Воспроизводим последовательность в offline контексте
-            recordedSequence.forEach((chord) => {
-                const rootFreq = noteFrequencies[chord.note];
-                let frequencies;
-                
-                switch(chord.chordType) {
-                    case 'major':
-                        frequencies = getMajorChord(rootFreq);
-                        break;
-                    case 'minor':
-                        frequencies = getMinorChord(rootFreq);
-                        break;
-                    case 'major7':
-                        frequencies = getMajor7Chord(rootFreq);
-                        break;
-                    case 'minor7':
-                        frequencies = getMinor7Chord(rootFreq);
-                        break;
-                }
-                
-                // Создаем и запускаем осцилляторы для каждого аккорда
-                frequencies.forEach((freq) => {
-                    const oscillator = offlineCtx.createOscillator();
-                    const gainNode = offlineCtx.createGain();
-                    
-                    // Применяем настройки высоты тона
-                    const pitchRatio = centsToRatio(renderSettings.pitch);
-                    oscillator.frequency.value = freq * pitchRatio;
-                    
-                    oscillator.type = renderSettings.waveform;
-                    oscillator.connect(gainNode);
-                    gainNode.connect(offlineCtx.destination);
-                    
-                    // Запускаем осциллятор в нужное время
-                    const startTime = chord.timeOffset / 1000;
-                    oscillator.start(startTime);
-                    
-                    // Применяем ADSR-огибающую
-                    createOfflineADSR(gainNode, startTime, renderSettings.duration);
-                    
-                    // Останавливаем осциллятор
-                    oscillator.stop(startTime + renderSettings.duration + 0.5);
-                });
-            });
-            
             try {
+                // Создаем OfflineAudioContext для рендеринга с высоким качеством
+                const sampleRate = 44100;
+                const offlineCtx = new OfflineAudioContext({
+                    numberOfChannels: 2,
+                    length: sampleRate * (recordedSequence[recordedSequence.length - 1].timeOffset / 1000 + settings.duration + 2),
+                    sampleRate: sampleRate,
+                });
+                
+                // Создаем полную цепочку эффектов для offline контекста
+                const offlineConvolver = offlineCtx.createConvolver();
+                const offlineMasterGain = offlineCtx.createGain();
+                const offlineCompressor = offlineCtx.createDynamicsCompressor();
+                const offlineFilter = offlineCtx.createBiquadFilter();
+                const offlineReverbGain = offlineCtx.createGain();
+                const offlineDryGain = offlineCtx.createGain();
+                const offlineLimiter = offlineCtx.createDynamicsCompressor();
+                
+                // Настройка компрессора
+                offlineCompressor.threshold.setValueAtTime(-24, offlineCtx.currentTime);
+                offlineCompressor.knee.setValueAtTime(30, offlineCtx.currentTime);
+                offlineCompressor.ratio.setValueAtTime(12, offlineCtx.currentTime);
+                offlineCompressor.attack.setValueAtTime(0.003, offlineCtx.currentTime);
+                offlineCompressor.release.setValueAtTime(0.25, offlineCtx.currentTime);
+                
+                // Настройка лимитера
+                offlineLimiter.threshold.setValueAtTime(-3.0, offlineCtx.currentTime);
+                offlineLimiter.knee.setValueAtTime(0, offlineCtx.currentTime);
+                offlineLimiter.ratio.setValueAtTime(20, offlineCtx.currentTime);
+                offlineLimiter.attack.setValueAtTime(0.001, offlineCtx.currentTime);
+                offlineLimiter.release.setValueAtTime(0.05, offlineCtx.currentTime);
+                
+                // Настройка фильтра
+                offlineFilter.type = 'lowpass';
+                offlineFilter.frequency.value = 500 + settings.brightness * 4500;
+                offlineFilter.Q.value = 1;
+                
+                // Настройка громкости
+                offlineMasterGain.gain.value = 0.5;
+                offlineDryGain.gain.value = 1.0 - settings.reverb * 0.7;
+                offlineReverbGain.gain.value = settings.reverb;
+                
+                // Подключаем цепочку эффектов
+                offlineMasterGain.connect(offlineFilter);
+                offlineFilter.connect(offlineDryGain);
+                offlineFilter.connect(offlineConvolver);
+                offlineConvolver.connect(offlineReverbGain);
+                offlineDryGain.connect(offlineCompressor);
+                offlineReverbGain.connect(offlineCompressor);
+                offlineCompressor.connect(offlineLimiter);
+                offlineLimiter.connect(offlineCtx.destination);
+                
+                // Создаем импульсный ответ для реверберации
+                const reverbBuffer = createReverbBuffer(offlineCtx, settings.duration * 1.5);
+                offlineConvolver.buffer = reverbBuffer;
+                
+                // Воспроизводим последовательность в offline контексте
+                recordedSequence.forEach((chord) => {
+                    const rootFreq = noteFrequencies[chord.note];
+                    let frequencies;
+                    
+                    switch(chord.chordType) {
+                        case 'major':
+                            frequencies = getMajorChord(rootFreq);
+                            break;
+                        case 'minor':
+                            frequencies = getMinorChord(rootFreq);
+                            break;
+                        case 'major7':
+                            frequencies = getMajor7Chord(rootFreq);
+                            break;
+                        case 'minor7':
+                            frequencies = getMinor7Chord(rootFreq);
+                            break;
+                    }
+                    
+                    // Создаем и запускаем осцилляторы для каждого аккорда
+                    frequencies.forEach((freq) => {
+                        // Применяем настройки высоты тона
+                        const pitchRatio = centsToRatio(settings.pitch);
+                        const finalFreq = freq * pitchRatio;
+                        
+                        // Создаем основной осциллятор
+                        const mainOsc = offlineCtx.createOscillator();
+                        mainOsc.frequency.value = finalFreq;
+                        mainOsc.type = settings.waveform;
+                        mainOsc.detune.value = settings.detune;
+                        
+                        // Создаем осциллятор с октавой выше для обертонов
+                        const overtoneOsc = offlineCtx.createOscillator();
+                        overtoneOsc.frequency.value = finalFreq * 2;
+                        overtoneOsc.type = 'triangle';
+                        overtoneOsc.detune.value = settings.detune;
+                        
+                        // Создаем осциллятор с квинтой для обертонов
+                        const fifthOsc = offlineCtx.createOscillator();
+                        fifthOsc.frequency.value = finalFreq * 1.5;
+                        fifthOsc.type = 'sine';
+                        fifthOsc.detune.value = -settings.detune;
+                        
+                        // Создаем узлы громкости для каждого осциллятора
+                        const mainGain = offlineCtx.createGain();
+                        const overtoneGain = offlineCtx.createGain();
+                        const fifthGain = offlineCtx.createGain();
+                        
+                        // Адаптивная громкость в зависимости от количества нот
+                        const adaptiveGain = 1 / Math.sqrt(frequencies.length);
+                        mainGain.gain.value = 0.1 * adaptiveGain;
+                        overtoneGain.gain.value = 0.03 * adaptiveGain;
+                        fifthGain.gain.value = 0.02 * adaptiveGain;
+                        
+                        // Подключаем осцилляторы
+                        mainOsc.connect(mainGain);
+                        overtoneOsc.connect(overtoneGain);
+                        fifthOsc.connect(fifthGain);
+                        
+                        // Подключаем все к мастер-усилителю
+                        mainGain.connect(offlineMasterGain);
+                        overtoneGain.connect(offlineMasterGain);
+                        fifthGain.connect(offlineMasterGain);
+                        
+                        // Запускаем осцилляторы
+                        const startTime = chord.timeOffset / 1000;
+                        mainOsc.start(startTime);
+                        overtoneOsc.start(startTime);
+                        fifthOsc.start(startTime);
+                        
+                        // Применяем ADSR-огибающую с улучшенными параметрами
+                        createOfflineADSR(mainGain, startTime, settings.duration, 0.05, 0.2, 0.7, 0.5);
+                        createOfflineADSR(overtoneGain, startTime, settings.duration, 0.05, 0.2, 0.5, 0.5);
+                        createOfflineADSR(fifthGain, startTime, settings.duration, 0.05, 0.2, 0.3, 0.5);
+                        
+                        // Останавливаем осцилляторы
+                        const stopTime = startTime + settings.duration + 0.5;
+                        mainOsc.stop(stopTime);
+                        overtoneOsc.stop(stopTime);
+                        fifthOsc.stop(stopTime);
+                    });
+                });
+                
                 // Рендерим аудио
                 const renderedBuffer = await offlineCtx.startRendering();
                 
-                // Конвертируем в WAV
+                // Конвертируем в WAV с высоким качеством
                 const wavBlob = bufferToWav(renderedBuffer);
                 
                 // Создаем ссылку для скачивания
                 const url = URL.createObjectURL(wavBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'sequence.wav';
+                a.download = `sequence_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.wav`;
                 a.click();
                 
                 // Освобождаем память
                 setTimeout(() => URL.revokeObjectURL(url), 1000);
+                
             } catch (error) {
                 console.error('Ошибка рендеринга:', error);
-                alert('Ошибка при создании WAV файла');
+                alert('Ошибка при создании WAV файла: ' + error.message);
             }
         }
         
@@ -1236,7 +1341,7 @@
             gainNode.gain.linearRampToValueAtTime(0, startTime + attack + decay + Math.max(0, sustainDuration) + release);
         }
         
-        // Функция для конвертации AudioBuffer в WAV Blob
+        // Функция для конвертации AudioBuffer в WAV Blob с улучшенным качеством
         function bufferToWav(buffer) {
             const numOfChan = buffer.numberOfChannels;
             const length = buffer.length * numOfChan * 2 + 44;
@@ -1261,19 +1366,32 @@
             setUint32(0x61746164); // "data" - chunk
             setUint32(length - pos - 4); // chunk length
             
-            // Записываем данные каналов
+            // Записываем данные каналов с нормализацией
             for (let i = 0; i < buffer.numberOfChannels; i++) {
                 channels.push(buffer.getChannelData(i));
             }
             
-            while (pos < length) {
-                for (let i = 0; i < numOfChan; i++) {
-                    // чередуем каналы
-                    let sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
-                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; // scale to 16-bit signed int
-                    view.setInt16(pos, sample, true); // write 16-bit sample
-                    pos += 2;
+            // Находим максимальное значение для нормализации
+            let maxVal = 0;
+            for (let i = 0; i < buffer.length; i++) {
+                for (let channel = 0; channel < numOfChan; channel++) {
+                    const val = Math.abs(channels[channel][i]);
+                    if (val > maxVal) maxVal = val;
                 }
+            }
+            
+            // Нормализуем и записываем данные
+            const normalizeFactor = maxVal > 0 ? 0.99 / maxVal : 1; // Оставляем небольшой запас
+            offset = 0;
+            
+            while (pos < length - 44) {
+                for (let channel = 0; channel < numOfChan; channel++) {
+                    // Нормализуем и ограничиваем значение
+                    let sample = Math.max(-1, Math.min(1, channels[channel][offset] * normalizeFactor));
+                    sample = sample < 0 ? sample * 32768 : sample * 32767;
+                    view.setInt16(pos + channel * 2, sample, true);
+                }
+                pos += numOfChan * 2;
                 offset++;
             }
             
@@ -1290,37 +1408,6 @@
                 pos += 4;
             }
         }
-        
-        // Остальной код секвенсора остается без изменений
-        // (функции createReverbBuffer, centsToRatio, createOscillator, managePolyphony,
-        // createADSR, playChord, noteFrequencies, getMajorChord, getMinorChord, 
-        // getMajor7Chord, getMinor7Chord, formatTime, updateRecordingTimer, startRecording,
-        // stopRecording, recordChord, addChordBlockToSequencer, playSequence, 
-        // playChordForSequence, highlightActiveChordBlock, stopPlayback, clearSequencer)
-        
-        // Инициализация Supabase и остальной код...
-        
-        // Создаем импульсный ответ для реверберации с разной длительностью
-        function createReverbBuffer(duration = 2.0) {
-            const length = audioContext.sampleRate * duration;
-            const buffer = audioContext.createBuffer(2, length, audioContext.sampleRate);
-            const dataL = buffer.getChannelData(0);
-            const dataR = buffer.getChannelData(1);
-            
-            for (let i = 0; i < length; i++) {
-                // Создаем более реалистичную реверберацию с ранними отражениями
-                const decay = Math.pow(1 - i / length, 2);
-                const earlyReflections = (i < length * 0.1) ? 1.5 : 1.0;
-                
-                dataL[i] = (Math.random() * 2 - 1) * decay * earlyReflections;
-                dataR[i] = (Math.random() * 2 - 1) * decay * earlyReflections;
-            }
-            
-            return buffer;
-        }
-        
-        // Инициализируем реверберацию
-        convolver.buffer = createReverbBuffer(2.0);
         
         // Функция для преобразования центов в коэффициент частоты
         function centsToRatio(cents) {
@@ -1391,7 +1478,7 @@
             filter.frequency.value = 500 + settings.brightness * 4500;
             
             // Обновляем длительность реверберации
-            convolver.buffer = createReverbBuffer(settings.duration * 1.5);
+            convolver.buffer = createReverbBuffer(audioContext, settings.duration * 1.5);
             
             // Адаптивная громкость в зависимости от количества нот
             const adaptiveGain = 1 / Math.sqrt(frequencies.length);
@@ -1907,6 +1994,9 @@
                 audioContext.resume();
             }
         }, { once: true });
+        
+        // Инициализируем реверберацию
+        convolver.buffer = createReverbBuffer(audioContext, 2.0);
     </script>
 </body>
 </html>
